@@ -8,19 +8,37 @@ const ram = require('random-access-memory')
 const signalhub = require('signalhub')
 const webrtcSwarm = require('webrtc-swarm')
 
-const feed = hypercore(file => ram(), {valueEncoding: 'json'})
-feed.ready(() => {
-  const hub = signalhub('datter/' + feed.key.toString('hex'), 'localhost:1337')
-  const swarm = webrtcSwarm(hub)
-  const peer = feed.replicate()
-  let peerCount = 0
-  swarm.on('peer', connection => {
-    console.log('CONNECT', peerCount++, 'peers for', feed.key.toString('hex'))
-    pump(peer, connection, peer, () => {
-      console.log('DISCONNECT:', peerCount--, 'peers for', feed.key.toString('hex'))
+global.connect = function connect (key) {
+  const feed = hypercore(file => ram(), key, {valueEncoding: 'json'})
+  feed.ready(() => {
+    console.log(feed.key.toString('hex'), feed.writable)
+
+    const hub = signalhub('datter/' + feed.key.toString('hex'), 'localhost:1337')
+    const swarm = webrtcSwarm(hub)
+    let peerCount = 0
+    swarm.on('peer', connection => {
+      console.log('CONNECT', ++peerCount, 'peers for', feed.key.toString('hex'))
+      const peer = feed.replicate({live: true})
+      pump(peer, connection, peer, () => {
+        console.log('DISCONNECT:', --peerCount, 'peers for', feed.key.toString('hex'))
+      })
     })
+
+    setInterval(() => {
+      if (feed.writable && peerCount > 0) {
+        console.log('.')
+        feed.append({liveAndDirect: +Date.now()})
+      }
+    }, 1000)
+
+    if (!feed.writable) {
+      feed.createReadStream({live: true}).on('data', chunk => {
+        console.log(chunk)
+      })
+    }
   })
-})
+}
+
 
 class App extends Component<void, void> {
   render() {
