@@ -1,4 +1,7 @@
 // @flow
+import './App.css'
+import {EditableText, FocusStyleManager, InputGroup, Text} from '@blueprintjs/core'
+import '@blueprintjs/core/dist/blueprint.css'
 import React, { Component } from 'react'
 import redux from 'tinyredux'
 const hypercore = require('hypercore')
@@ -6,12 +9,15 @@ const pump = require('pump')
 const idb = require('random-access-idb')
 const ram = require('random-access-memory')
 const signalhub = require('signalhub')
+const sodium = require('sodium-universal')
 const webrtcSwarm = require('webrtc-swarm')
 const nanobus = require('nanobus')
 
+FocusStyleManager.onlyShowFocusOnTabs()
+
 const debug = true
 // window.localStorage.debug = 'webrtc-swarm'
-const persist = false
+const persist = true
 const hubs = ['localhost:1337']
 
 function connect (readKey) {
@@ -81,21 +87,21 @@ global.connect = connect
 //   })
 // }
 
-type Message = {
+type MessageType = {
   author: string,
   content: any & {
     ts: number,
   },
 }
 
-type State = {|
+type StateType = {|
   key: string,
   peers: {[key: string]: number},
-  messages: Array<Message>,
+  messages: Array<MessageType>,
   following: {[key: string]: boolean},
 |}
 
-const initialState: State = {
+const initialState: StateType = {
   key: '',
   peers: {},
   messages: [],
@@ -111,9 +117,9 @@ function action (type, payload) {
 }
 
 // Add a new message to the feed, ordering by timestamp
-function insert (messages: Array<Message>, message: Message) {
+function insert (messages: Array<MessageType>, message: MessageType) {
   return messages.concat([message]).sort((a, b) => {
-    return (a.content.ts || 0) - (b.content.ts || 0)
+    return (b.content.ts || 0) - (a.content.ts || 0)
   })
 }
 
@@ -128,7 +134,7 @@ function reducer (state = initialState, {type, payload}) {
     }
     case 'me/read': {
       const message = {
-        author: 'me',
+        author: state.key,
         content: payload,
       }
       return u(state, {messages: insert(state.messages, message)})
@@ -154,33 +160,119 @@ function reducer (state = initialState, {type, payload}) {
   return state
 }
 
-class ExpandableKey extends Component<{feedKey: string}, {expanded: boolean}> {
+// Use the prefix of the (blake2b) hash of the given key as a color code.
+// We use the hash rather than the original key so that the color is sensitive to typos.
+function keyToColor (key) {
+  const digest = new Buffer(32)
+  sodium.crypto_generichash_batch(digest, key)
+  return '#' + digest.toString('hex').slice(0, 6)
+}
+
+function Following ({peers}) {
+  const keys = Object.keys(peers)
+  if (keys.length < 1) {
+    return <div>Peers: 0</div>
+  }
+  return (
+    <div>Peers: {keys.map(key => <span key={key} title={key} style={{backgroundColor: keyToColor(key)}}>{peers[key]}</span>)}</div>
+  )
+}
+
+class Follow extends Component<{onFollow: string => void}, {key: string}> {
+  inputRef: HTMLInputElement
+
+  static keyLength = 64
+
   state = {
-    expanded: false,
+    key: '',
+    error: false,
+  }
+
+  onChange (e) {
+    const key = e.target.value
+    this.setState({key})
+    if (key.length === Follow.keyLength) {
+      this.inputRef.style.backgroundColor = keyToColor(key)
+    } else {
+      this.inputRef.style.backgroundColor = ''
+    }
+  }
+
+  onFollow () {
+    if (this.state.key.length !== Follow.keyLength) {
+      return
+    }
+    this.props.onFollow(this.state.key)
   }
 
   render () {
-    const {
-      feedKey
-    } = this.props
-    if (!feedKey) return <div>...</div>
-    const prefix = feedKey.slice(0, 6)
+    const {key} = this.state
+    const textboxColor = key.length === Follow.keyLength
+      ? 'pt-intent-success' // green
+      : key.length > 0
+        ? 'pt-intent-danger' // red
+        : '' // none
     return (
-      <div>
-        <span
-          style={{
-            backgroundColor: `#${prefix}`,
-            fontFamily: '"Roboto Mono", monospace'
-          }}
-          onMouseEnter={() => this.setState({expanded: true})}
-          onMouseLeave={() => this.setState({expanded: false})}
-        >{this.state.expanded ? feedKey : `${prefix}...`}</span>
+      <InputGroup
+        className={`key-input ${textboxColor}`}
+        inputRef={ref => this.inputRef = ref}
+        placeholder={'Paste key to follow...'}
+        onChange={e => this.onChange(e)}
+        onKeyDown={e => e.key === 'Enter' && this.onFollow()}
+        rightElement={
+          <button type="button" className={'pt-button pt-intent-primary'} onClick={() => this.onFollow()}>
+            Follow
+          </button>
+        }
+      />
+    )
+  }
+}
+
+class WriteMessage extends Component<{onSend: string => void}, {message: string}> {
+  state = {
+    message: ''
+  }
+
+  onSend () {
+    this.props.onSend(this.state.message)
+    this.setState({message: ''})
+  }
+
+  render () {
+    return (
+      <div className="WriteMessage">
+        <EditableText
+          multiline
+          minLines={3}
+          maxLines={10}
+          placeholder={`What's happing in the hyperworld?`}
+          value={this.state.message}
+          onChange={value => this.setState({message: value})}
+        />
+        <button type="button" className="pt-button pt-intent-primary" onClick={() => this.onSend()}>Send :)</button>
       </div>
     )
   }
 }
 
-class App extends Component<{state: State, dispatch: any => void}, void> {
+const Key = ({k}) => (
+  <span className="pt-tag pt-large key" style={{backgroundColor: keyToColor(k)}}>{k}</span>
+)
+
+class Message extends Component<{message: MessageType}, void> {
+  render () {
+    const {message} = this.props
+    return (
+      <div className="Message">
+        <div className="author"><Key k={message.author} /></div>
+        <Text>{message.content.text}</Text>
+      </div>
+    )
+  }
+}
+
+class App extends Component<{state: StateType, dispatch: any => void}, void> {
   write: (message: string) => void
   follow: (key: string) => void
 
@@ -198,8 +290,8 @@ class App extends Component<{state: State, dispatch: any => void}, void> {
       feed.on('peer/disconnect', peerCount => dispatch(action('other/peer/disconnect', {key, peerCount})))
       feed.on('read', message => dispatch(action('other/read', {key, message})))
     }
-    this.write = message => feed.emit('write', {
-      message,
+    this.write = text => feed.emit('write', {
+      text,
       ts: +Date.now(),
     })
   }
@@ -208,23 +300,20 @@ class App extends Component<{state: State, dispatch: any => void}, void> {
     const {
       key,
       peers,
-      following,
       messages,
     } = this.props.state
     return (
-      <div>
-        <div className="profile">
-          <ExpandableKey feedKey={key} />
+      <div className="App">
+        <Follow onFollow={this.follow} />
+        <div className="Profile">
+          <Key k={key} />
+          <Following peers={peers} />
         </div>
-        <div>{JSON.stringify(following)}</div>
-        <div>{JSON.stringify(peers)}</div>
-        <div>{messages.map((message, i) => <div key={i}>{JSON.stringify(message)}</div>)}</div>
-        <input onKeyDown={e => {e.key === 'Enter' && this.write(e.target.value)}} type="text" />
-        <input onKeyDown={e => {e.key === 'Enter' && this.follow(e.target.value)}} type="text" />
+        <WriteMessage onSend={this.write} />
+        <div>{messages.map((message, i) => <Message message={message} />)}</div>
       </div>
     )
   }
 }
 
 export default redux(App, reducer)
-// export default () => <div>disabled</div>
