@@ -4,11 +4,15 @@ import redux from 'tinyredux'
 const hypercore = require('hypercore')
 const pump = require('pump')
 const idb = require('random-access-idb')
+const ram = require('random-access-memory')
 const signalhub = require('signalhub')
 const webrtcSwarm = require('webrtc-swarm')
 const nanobus = require('nanobus')
 
 const debug = true
+// window.localStorage.debug = 'webrtc-swarm'
+const persist = false
+const hubs = ['localhost:1337']
 
 function connect (readKey) {
   const events = nanobus()
@@ -17,18 +21,21 @@ function connect (readKey) {
     events.on('*', (name, data) => console.log(name, data))
   }
 
-  const feed = hypercore(file => idb(readKey ? 'datter/' + readKey : 'datter/me')(file), readKey, {valueEncoding: 'json'})
+  const feed = hypercore(
+    file => persist ? idb(readKey ? 'datter/' + readKey : 'datter/me')(file) : ram(),
+    readKey,
+    {valueEncoding: 'json'}
+  )
   feed.ready(() => {
     const key = feed.key.toString('hex')
     events.emit('ready', key)
-    const hub = signalhub('datter/' + key, 'localhost:1337')
+    const hub = signalhub('datter/' + key, hubs)
     const swarm = webrtcSwarm(hub)
-    let peerCount = 0
-    swarm.on('peer', connection => {
-      events.emit('peer/connect', ++peerCount)
-      const peer = feed.replicate({live: true})
-      pump(peer, connection, peer, () => {
-        events.emit('peer/disconnect', --peerCount)
+    swarm.on('peer', (peer, id) => {
+      events.emit('peer/connect', swarm.peers.length)
+      const replicate = feed.replicate({live: true})
+      pump(replicate, peer, replicate, () => {
+        events.emit('peer/disconnect', swarm.peers.length)
       })
     })
 
@@ -50,10 +57,49 @@ function connect (readKey) {
 
 global.connect = connect
 
-const initialState = {
-  key: null,
-  peerCount: 0,
+// // works
+// global.testConnect = function () {
+//   const self = connect()
+//   self.on('ready', key => {
+//     const other = connect(key)
+//     other.on('peer/connect', peers => {
+//       console.log('peers!', peers)
+//       self.emit('write', {hello: 'world'})
+//     })
+//     other.on('read', message => {
+//       console.log(message)
+//     })
+//   })
+// }
+
+// // works
+// global.testHub = function (key) {
+//   const hub = signalhub('test_' + key, hubs)
+//   const swarm = webrtcSwarm(hub)
+//   swarm.on('peer', function () {
+//     console.log('peer', arguments)
+//   })
+// }
+
+type Message = {
+  author: string,
+  content: any & {
+    ts: number,
+  },
+}
+
+type State = {|
+  key: string,
+  peers: {[key: string]: number},
+  messages: Array<Message>,
+  following: {[key: string]: boolean},
+|}
+
+const initialState: State = {
+  key: '',
+  peers: {},
   messages: [],
+  following: {},
 }
 
 function u (...updates) {
@@ -64,6 +110,13 @@ function action (type, payload) {
   return {type, payload}
 }
 
+// Add a new message to the feed, ordering by timestamp
+function insert (messages: Array<Message>, message: Message) {
+  return messages.concat([message]).sort((a, b) => {
+    return (a.content.ts || 0) - (b.content.ts || 0)
+  })
+}
+
 function reducer (state = initialState, {type, payload}) {
   switch (type) {
     case 'me/ready': {
@@ -71,36 +124,74 @@ function reducer (state = initialState, {type, payload}) {
     }
     case 'me/peer/connect':
     case 'me/peer/disconnect': {
-      return u(state, {peerCount: payload})
+      return u(state, {peers: u(state.peers, {[state.key]: payload})})
     }
     case 'me/read': {
       const message = {
         author: 'me',
         content: payload,
       }
-      return u(state, {messages: state.messages.concat([message])})
+      return u(state, {messages: insert(state.messages, message)})
     }
     case 'other/ready': {
-      // TODO
+      const key = payload
+      return u(state, {following: u(state.following, {[key]: true})})
+    }
+    case 'other/peer/connect':
+    case 'other/peer/disconnect': {
+      const {key, peerCount} = payload
+      return u(state, {peers: u(state.peers, {[key]: peerCount})})
+    }
+    case 'other/read': {
+      const message = {
+        author: payload.key,
+        content: payload.message,
+      }
+      return u(state, {messages: insert(state.messages, message)})
     }
     default:
   }
   return state
 }
 
-class App extends Component<void, void> {
-  join: (key: string) => void
-  write: (message: string) => void
+class ExpandableKey extends Component<{feedKey: string}, {expanded: boolean}> {
+  state = {
+    expanded: false,
+  }
 
-  constructor (props) {
-    super(props)
-    const {dispatch} = props
+  render () {
+    const {
+      feedKey
+    } = this.props
+    if (!feedKey) return <div>...</div>
+    const prefix = feedKey.slice(0, 6)
+    return (
+      <div>
+        <span
+          style={{
+            backgroundColor: `#${prefix}`,
+            fontFamily: '"Roboto Mono", monospace'
+          }}
+          onMouseEnter={() => this.setState({expanded: true})}
+          onMouseLeave={() => this.setState({expanded: false})}
+        >{this.state.expanded ? feedKey : `${prefix}...`}</span>
+      </div>
+    )
+  }
+}
+
+class App extends Component<{state: State, dispatch: any => void}, void> {
+  write: (message: string) => void
+  follow: (key: string) => void
+
+  componentDidMount () {
+    const {dispatch} = this.props
     const feed = connect()
     feed.on('ready', key => dispatch(action('me/ready', key)))
     feed.on('peer/connect', peerCount => dispatch(action('me/peer/connect', peerCount)))
     feed.on('peer/disconnect', peerCount => dispatch(action('me/peer/disconnect', peerCount)))
     feed.on('read', message => dispatch(action('me/read', message)))
-    this.join = key => {
+    this.follow = key => {
       const feed = connect(key)
       feed.on('ready', key => dispatch(action('other/ready', key)))
       feed.on('peer/connect', peerCount => dispatch(action('other/peer/connect', {key, peerCount})))
@@ -116,19 +207,24 @@ class App extends Component<void, void> {
   render() {
     const {
       key,
-      peerCount,
+      peers,
+      following,
       messages,
     } = this.props.state
     return (
       <div>
-        <div>{key}</div>
-        <div>{peerCount}</div>
+        <div className="profile">
+          <ExpandableKey feedKey={key} />
+        </div>
+        <div>{JSON.stringify(following)}</div>
+        <div>{JSON.stringify(peers)}</div>
         <div>{messages.map((message, i) => <div key={i}>{JSON.stringify(message)}</div>)}</div>
         <input onKeyDown={e => {e.key === 'Enter' && this.write(e.target.value)}} type="text" />
-        <input onKeyDown={e => {e.key === 'Enter' && this.join(e.target.value)}} type="text" />
+        <input onKeyDown={e => {e.key === 'Enter' && this.follow(e.target.value)}} type="text" />
       </div>
     )
   }
 }
 
-export default redux(App, reducer);
+export default redux(App, reducer)
+// export default () => <div>disabled</div>
