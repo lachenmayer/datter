@@ -5,24 +5,19 @@ import {BrowserRouter, Route, Switch} from 'react-router-dom'
 import Feed from '../../Feed'
 
 import Home from '../Home'
+import Profile from '../Profile'
 
 import './style.css'
+
+const feeds = {}
 
 class App extends Component<{dispatch: any => void}, void> {
   writeMessage: (message: string) => void
   follow: (key: string) => void
 
-  replicate (key) {
-    const {dispatch} = this.props
-    const feed = new Feed(key)
-    feed.onReady(key => dispatch(action('other/ready', key)))
-    feed.onPeerConnect(peerCount => dispatch(action('other/peer/connect', {key, peerCount})))
-    feed.onPeerDisconnect(peerCount => dispatch(action('other/peer/disconnect', {key, peerCount})))
-    feed.onRead(message => dispatch(action('other/read', message)))
-  }
-
-  componentDidMount () {
-    const {dispatch} = this.props
+  constructor (props) {
+    super(props)
+    const {dispatch} = props
     const me = new Feed()
     me.onReady(key => dispatch(action('me/ready', key)))
     me.onPeerConnect(peerCount => dispatch(action('me/peer/connect', peerCount)))
@@ -33,6 +28,15 @@ class App extends Component<{dispatch: any => void}, void> {
       }
       dispatch(action('me/read', message))
     })
+    this.replicate = key => {
+      if (feeds[key]) return
+      const feed = new Feed(key)
+      feed.onReady(key => dispatch(action('other/ready', key)))
+      feed.onPeerConnect(peerCount => dispatch(action('other/peer/connect', {key, peerCount})))
+      feed.onPeerDisconnect(peerCount => dispatch(action('other/peer/disconnect', {key, peerCount})))
+      feed.onRead(message => dispatch(action('other/read', message)))
+      feeds[key] = feed
+    }
     this.follow = key => {
       this.replicate(key)
       me.follow(key)
@@ -49,6 +53,14 @@ class App extends Component<{dispatch: any => void}, void> {
               <Home
                 onFollow={this.follow}
                 writeMessage={this.writeMessage}
+              />
+            )} />
+            <Route path="/profile/:key" render={({match}) => (
+              <Profile
+                replicate={this.replicate}
+                writeMessage={this.writeMessage}
+
+                feedKey={match.params.key}
               />
             )} />
           </Switch>

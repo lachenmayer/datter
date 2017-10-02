@@ -4,7 +4,7 @@ export type StateType = {|
   key: string,
   peers: {[key: string]: number},
   messages: Array<MessageType>,
-  following: {[key: string]: Array<MessageType>},
+  feeds: {[key: string]: Array<MessageType>},
 |}
 
 export type ActionType
@@ -21,7 +21,7 @@ const initialState: StateType = {
   key: '',
   peers: {},
   messages: [],
-  following: {},
+  feeds: {},
 }
 
 export default function reducer (state: StateType = initialState, action: ActionType): StateType {
@@ -32,7 +32,7 @@ export default function reducer (state: StateType = initialState, action: Action
     }
     case 'other/ready': {
       const key = payload
-      return u(state, {following: u(state.following, {[key]: []})})
+      return u(state, {feeds: u(state.feeds, {[key]: []})})
     }
     case 'me/peer/connect':
     case 'me/peer/disconnect': {
@@ -43,16 +43,12 @@ export default function reducer (state: StateType = initialState, action: Action
       const {key, peerCount} = payload
       return u(state, {peers: u(state.peers, {[key]: peerCount})})
     }
-    case 'me/read': {
-      return u(state, {
-        messages: insert(state.messages, payload),
-      })
-    }
+    case 'me/read':
     case 'other/read': {
-      const followingMessages = insert(state.following[payload.author], payload)
+      const feedMessages = insert(state.feeds[payload.author], payload)
       return u(state, {
         messages: insert(state.messages, payload),
-        following: u(state.following, {[payload.author]: followingMessages})
+        feeds: u(state.feeds, {[payload.author]: feedMessages})
       })
     }
     default:

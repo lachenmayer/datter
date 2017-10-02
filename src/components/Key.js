@@ -1,9 +1,10 @@
 import React from 'react'
+import {Link} from 'react-router-dom'
 
 import keyToColor from '../keyToColor'
 
-const Key = ({k}) => (
-  <div className={'key'} style={{backgroundColor: keyToColor(k)}}>{k}</div>
+export default ({k}) => (
+  <Link to={`/profile/${k}`}>
+    <div className={'key'} style={{backgroundColor: keyToColor(k)}}>{k}</div>
+  </Link>
 )
-
-export default Key
