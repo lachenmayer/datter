@@ -1,98 +1,16 @@
 // @flow
 import './App.css'
+import {type MessageType} from './types'
+import Feed from './Feed'
+import keyToColor from './keyToColor'
+
 import {EditableText, FocusStyleManager, InputGroup, Text} from '@blueprintjs/core'
 import '@blueprintjs/core/dist/blueprint.css'
+import moment from 'moment'
 import React, { Component } from 'react'
 import redux from 'tinyredux'
-const hypercore = require('hypercore')
-const pump = require('pump')
-const idb = require('random-access-idb')
-const ram = require('random-access-memory')
-const signalhub = require('signalhub')
-const sodium = require('sodium-universal')
-const webrtcSwarm = require('webrtc-swarm')
-const nanobus = require('nanobus')
 
 FocusStyleManager.onlyShowFocusOnTabs()
-
-const debug = true
-// window.localStorage.debug = 'webrtc-swarm'
-const persist = true
-const hubs = ['localhost:1337']
-
-function connect (readKey) {
-  const events = nanobus()
-
-  if (debug) {
-    events.on('*', (name, data) => console.log(name, data))
-  }
-
-  const feed = hypercore(
-    file => persist ? idb(readKey ? 'datter/' + readKey : 'datter/me')(file) : ram(),
-    readKey,
-    {valueEncoding: 'json'}
-  )
-  feed.ready(() => {
-    const key = feed.key.toString('hex')
-    events.emit('ready', key)
-    const hub = signalhub('datter/' + key, hubs)
-    const swarm = webrtcSwarm(hub)
-    swarm.on('peer', (peer, id) => {
-      events.emit('peer/connect', swarm.peers.length)
-      const replicate = feed.replicate({live: true})
-      pump(replicate, peer, replicate, () => {
-        events.emit('peer/disconnect', swarm.peers.length)
-      })
-    })
-
-    if (feed.writable) {
-      events.on('write', chunk => {
-        feed.append(chunk, err => {
-          if (err) console.error(err)
-        })
-      })
-    }
-
-    feed.createReadStream({live: true}).on('data', chunk => {
-      events.emit('read', chunk)
-    })
-  })
-
-  return events
-}
-
-global.connect = connect
-
-// // works
-// global.testConnect = function () {
-//   const self = connect()
-//   self.on('ready', key => {
-//     const other = connect(key)
-//     other.on('peer/connect', peers => {
-//       console.log('peers!', peers)
-//       self.emit('write', {hello: 'world'})
-//     })
-//     other.on('read', message => {
-//       console.log(message)
-//     })
-//   })
-// }
-
-// // works
-// global.testHub = function (key) {
-//   const hub = signalhub('test_' + key, hubs)
-//   const swarm = webrtcSwarm(hub)
-//   swarm.on('peer', function () {
-//     console.log('peer', arguments)
-//   })
-// }
-
-type MessageType = {
-  author: string,
-  content: any & {
-    ts: number,
-  },
-}
 
 type StateType = {|
   key: string,
@@ -108,64 +26,31 @@ const initialState: StateType = {
   following: {},
 }
 
-function u (...updates) {
-  return Object.assign({}, ...updates)
-}
-
-function action (type, payload) {
-  return {type, payload}
-}
-
-// Add a new message to the feed, ordering by timestamp
-function insert (messages: Array<MessageType>, message: MessageType) {
-  return messages.concat([message]).sort((a, b) => {
-    return (b.content.ts || 0) - (a.content.ts || 0)
-  })
-}
-
 function reducer (state = initialState, {type, payload}) {
   switch (type) {
     case 'me/ready': {
       return u(state, {key: payload})
     }
-    case 'me/peer/connect':
-    case 'me/peer/disconnect': {
-      return u(state, {peers: u(state.peers, {[state.key]: payload})})
-    }
-    case 'me/read': {
-      const message = {
-        author: state.key,
-        content: payload,
-      }
-      return u(state, {messages: insert(state.messages, message)})
-    }
     case 'other/ready': {
       const key = payload
       return u(state, {following: u(state.following, {[key]: true})})
+    }
+    case 'me/peer/connect':
+    case 'me/peer/disconnect': {
+      return u(state, {peers: u(state.peers, {[state.key]: payload})})
     }
     case 'other/peer/connect':
     case 'other/peer/disconnect': {
       const {key, peerCount} = payload
       return u(state, {peers: u(state.peers, {[key]: peerCount})})
     }
+    case 'me/read':
     case 'other/read': {
-      const message = {
-        author: payload.key,
-        content: payload.message,
-      }
-      return u(state, {messages: insert(state.messages, message)})
+      return u(state, {messages: insert(state.messages, payload)})
     }
     default:
   }
   return state
-}
-
-// Use the prefix of the (blake2b) hash of the given key as a color code.
-// We use the hash rather than the original key so that the color is sensitive to typos.
-function keyToColor (key) {
-  const digest = new Buffer(32)
-  sodium.crypto_generichash_batch(digest, key)
-  return '#' + digest.toString('hex').slice(0, 6)
 }
 
 function Following ({peers}) {
@@ -256,44 +141,64 @@ class WriteMessage extends Component<{onSend: string => void}, {message: string}
   }
 }
 
-const Key = ({k}) => (
-  <span className="pt-tag pt-large key" style={{backgroundColor: keyToColor(k)}}>{k}</span>
+const Key = ({k, className}) => (
+  <div className={`key ${className}`} style={{backgroundColor: keyToColor(k)}}>{k}</div>
 )
 
 class Message extends Component<{message: MessageType}, void> {
   render () {
-    const {message} = this.props
+    const {message: {content, author}} = this.props
     return (
-      <div className="Message">
-        <div className="author"><Key k={message.author} /></div>
-        <Text>{message.content.text}</Text>
+      <div className="message">
+        <div className="author"><Key k={author} /></div>
+        <div className="content">
+          {(() => {
+            switch (content.type) {
+              case 'message': return <Text>{content.payload}</Text>
+              case 'follow': return <Text>followed <Key k={content.payload} /></Text>
+              default: return <Text>
+                can't handle message content:
+                <pre>{JSON.stringify(content)}</pre>
+              </Text>
+            }
+          })()}
+        </div>
+        <div className="timestamp">{moment(content.ts).fromNow()}</div>
       </div>
     )
   }
 }
 
 class App extends Component<{state: StateType, dispatch: any => void}, void> {
-  write: (message: string) => void
+  writeMessage: (message: string) => void
   follow: (key: string) => void
+
+  followPeer (key) {
+    const {dispatch} = this.props
+    const feed = new Feed(key)
+    feed.onReady(key => dispatch(action('other/ready', key)))
+    feed.onPeerConnect(peerCount => dispatch(action('other/peer/connect', {key, peerCount})))
+    feed.onPeerDisconnect(peerCount => dispatch(action('other/peer/disconnect', {key, peerCount})))
+    feed.onRead(message => dispatch(action('other/read', message)))
+  }
 
   componentDidMount () {
     const {dispatch} = this.props
-    const feed = connect()
-    feed.on('ready', key => dispatch(action('me/ready', key)))
-    feed.on('peer/connect', peerCount => dispatch(action('me/peer/connect', peerCount)))
-    feed.on('peer/disconnect', peerCount => dispatch(action('me/peer/disconnect', peerCount)))
-    feed.on('read', message => dispatch(action('me/read', message)))
-    this.follow = key => {
-      const feed = connect(key)
-      feed.on('ready', key => dispatch(action('other/ready', key)))
-      feed.on('peer/connect', peerCount => dispatch(action('other/peer/connect', {key, peerCount})))
-      feed.on('peer/disconnect', peerCount => dispatch(action('other/peer/disconnect', {key, peerCount})))
-      feed.on('read', message => dispatch(action('other/read', {key, message})))
-    }
-    this.write = text => feed.emit('write', {
-      text,
-      ts: +Date.now(),
+    const me = new Feed()
+    me.onReady(key => dispatch(action('me/ready', key)))
+    me.onPeerConnect(peerCount => dispatch(action('me/peer/connect', peerCount)))
+    me.onPeerDisconnect(peerCount => dispatch(action('me/peer/disconnect', peerCount)))
+    me.onRead(message => {
+      if (message.content.type === 'follow') {
+        this.followPeer(message.content.payload)
+      }
+      dispatch(action('me/read', message))
     })
+    this.follow = key => {
+      me.follow(key)
+      this.followPeer(key)
+    }
+    this.writeMessage = text => me.writeMessage(text)
   }
 
   render() {
@@ -303,17 +208,32 @@ class App extends Component<{state: StateType, dispatch: any => void}, void> {
       messages,
     } = this.props.state
     return (
-      <div className="App">
+      <div className="app">
         <Follow onFollow={this.follow} />
-        <div className="Profile">
+        <div className="profile">
           <Key k={key} />
           <Following peers={peers} />
         </div>
-        <WriteMessage onSend={this.write} />
-        <div>{messages.map((message, i) => <Message message={message} />)}</div>
+        <WriteMessage onSend={this.writeMessage} />
+        <div>{messages.map((message, i) => <Message key={i} message={message} />)}</div>
       </div>
     )
   }
+}
+
+function u (...updates) {
+  return Object.assign({}, ...updates)
+}
+
+function action (type, payload) {
+  return {type, payload}
+}
+
+// Add a new message to the feed, ordering by timestamp
+function insert (messages: Array<MessageType>, message: MessageType) {
+  return messages.concat([message]).sort((a, b) => {
+    return (b.content.ts || 0) - (a.content.ts || 0)
+  })
 }
 
 export default redux(App, reducer)

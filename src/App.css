@@ -1,10 +1,10 @@
-.App {
+.app {
   max-width: 620px;
   margin: auto;
   /*border: 1px solid red;*/
 }
 
-.Profile {
+.profile {
   /*border: 1px solid blue;*/
 }
 
@@ -16,4 +16,24 @@
 
 .error {
   background-color: red;
+}
+
+.message {
+  margin: 10px 0;
+  border-left: 2px solid #BFCCD6;
+  /*background-color: #EBF1F5;*/
+}
+
+.key {
+  padding: 5px;
+}
+
+.message .content {
+  padding: 10px;
+}
+
+.message .timestamp {
+  font-size: 0.8em;
+  color: #394B59;
+  padding: 10px;
 }
