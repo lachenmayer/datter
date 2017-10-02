@@ -42,11 +42,14 @@
     "react-addons-css-transition-group": "^15.6.2",
     "react-dev-utils": "^4.1.0",
     "react-dom": "^16.0.0",
+    "react-redux": "^5.0.6",
+    "react-router": "^4.2.0",
+    "react-router-dom": "^4.2.2",
+    "redux": "^3.7.2",
     "signalhub": "^4.9.0",
     "sodium-universal": "^1.4.0",
     "style-loader": "0.18.2",
     "sw-precache-webpack-plugin": "0.11.4",
-    "tinyredux": "^1.0.0",
     "transform-loader": "^0.2.4",
     "url-loader": "0.5.9",
     "webpack": "3.5.1",
@@ -100,5 +103,8 @@
   },
   "eslintConfig": {
     "extends": "react-app"
+  },
+  "devDependencies": {
+    "flow-bin": "^0.56.0"
   }
 }
