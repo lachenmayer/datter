@@ -2,6 +2,8 @@ import React, {Component} from 'react'
 import {connect} from 'react-redux'
 import {BrowserRouter, Route, Switch} from 'react-router-dom'
 
+import Following from '../../components/Following'
+
 import Feed from '../../Feed'
 
 import Home from '../Home'
@@ -11,7 +13,7 @@ import './style.css'
 
 const feeds = {}
 
-class App extends Component<{dispatch: any => void}, void> {
+class App extends Component<{peers: {[key: string]: number}, dispatch: any => void}, void> {
   writeMessage: (message: string) => void
   follow: (key: string) => void
 
@@ -29,13 +31,23 @@ class App extends Component<{dispatch: any => void}, void> {
       dispatch(action('me/read', message))
     })
     this.replicate = key => {
-      if (feeds[key]) return
-      const feed = new Feed(key)
-      feed.onReady(key => dispatch(action('other/ready', key)))
-      feed.onPeerConnect(peerCount => dispatch(action('other/peer/connect', {key, peerCount})))
-      feed.onPeerDisconnect(peerCount => dispatch(action('other/peer/disconnect', {key, peerCount})))
-      feed.onRead(message => dispatch(action('other/read', message)))
-      feeds[key] = feed
+      if (feeds[key]) {
+        feeds[key].close()
+        feeds[key].onceClosed(err => {
+          if (err) console.error(err)
+          feeds[key] = makeFeed(key)
+        })
+      } else {
+        feeds[key] = makeFeed(key)
+      }
+      function makeFeed (key) {
+        const feed = new Feed(key)
+        feed.onReady(key => dispatch(action('other/ready', key)))
+        feed.onPeerConnect(peerCount => dispatch(action('other/peer/connect', {key, peerCount})))
+        feed.onPeerDisconnect(peerCount => dispatch(action('other/peer/disconnect', {key, peerCount})))
+        feed.onRead(message => dispatch(action('other/read', message)))
+        return feed
+      }
     }
     this.follow = key => {
       this.replicate(key)
@@ -45,6 +57,7 @@ class App extends Component<{dispatch: any => void}, void> {
   }
 
   render() {
+    const {peers} = this.props
     return (
       <BrowserRouter>
         <div className="app">
@@ -64,14 +77,24 @@ class App extends Component<{dispatch: any => void}, void> {
               />
             )} />
           </Switch>
-          {/* <Following peers={peers} /> */}
+          <Following peers={peers} />
         </div>
       </BrowserRouter>
     )
   }
 }
 
-export default connect()(App)
+global.test = () => {
+  const leader = new Feed()
+  leader.onReady(leaderKey => {
+    const follower = new Feed(leaderKey)
+    follower.onPeerConnect(console.log)
+    leader.onPeerConnect(console.log)
+  })
+}
+
+export default () => <div>disabled</div>
+// export default connect(state => ({peers: state.peers}))(App)
 
 function action (type, payload) {
   return {type, payload}

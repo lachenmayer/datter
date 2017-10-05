@@ -26,7 +26,14 @@ function mapStateToProps (state, ownProps) {
 class Profile extends Component<Props, void> {
   componentDidMount () {
     const {replicate, feedKey} = this.props
-    replicate(feedKey) // in case we are not following that key already
+    replicate(feedKey)
+  }
+
+  componentDidUpdate (previousProps) {
+    const {replicate, feedKey} = this.props
+    if (feedKey !== previousProps.feedKey) {
+      replicate(feedKey) // in case we are not following that key already
+    }
   }
 
   render () {

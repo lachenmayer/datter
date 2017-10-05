@@ -11,14 +11,16 @@ const nanobus = require('nanobus')
 
 const debug = true
 // window.localStorage.debug = 'webrtc-swarm'
-const persist = true
-const hubs = ['localhost:1337']
+const hubs = [
+  'http://localhost:1337',
+  // 'https://signals.unassu.me',
+]
 
 export default class Feed {
   key: string
   events: nanobus
 
-  constructor (otherKey: ?string) {
+  constructor (otherKey: ?string = null, persist: boolean = false) {
     this.events = nanobus()
     if (debug) {
       this.events.on('*', (name, data) => console.log(name, data))
@@ -31,16 +33,27 @@ export default class Feed {
     )
     feed.ready(() => {
       this.key = feed.key.toString('hex')
-      this.events.emit('ready', this.key)
+
       const hub = signalhub('datter/' + this.key, hubs)
       const swarm = webrtcSwarm(hub)
-      swarm.on('peer', (peer, id) => {
+
+      swarm.on('connect', (peer, id) => {
         this.events.emit('peer/connect', swarm.peers.length)
-        const replicate = feed.replicate({live: true})
+        const replicate = feed.replicate({live: true, download: true})
         pump(replicate, peer, replicate, () => {
           this.events.emit('peer/disconnect', swarm.peers.length)
         })
       })
+
+      this.events.on('close', () => {
+        swarm.close(swarmErr => {
+          feed.close(feedErr => {
+            this.events.emit('closed', swarmErr || feedErr)
+          })
+        })
+      })
+      
+      this.events.emit('ready', this.key)
 
       if (feed.writable) {
         this.events.on('write', (event: EventType) => {
@@ -50,9 +63,12 @@ export default class Feed {
         })
       }
 
+
       feed.createReadStream({live: true}).on('data', (event: EventType) => {
         this.events.emit('read', event)
       })
+
+
     })
   }
 
@@ -83,6 +99,14 @@ export default class Feed {
 
   follow (key: string) {
     this.events.emit('write', event('follow', key))
+  }
+
+  close () {
+    this.events.emit('close')
+  }
+
+  onceClosed (listener: (err: ?Error) => void) {
+    this.events.once('closed', listener)
   }
 }
 
