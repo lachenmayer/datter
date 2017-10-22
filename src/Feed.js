@@ -10,11 +10,28 @@ const webrtcSwarm = require('webrtc-swarm')
 const nanobus = require('nanobus')
 
 const debug = true
-// window.localStorage.debug = 'webrtc-swarm'
+window.localStorage.debug = null
 const hubs = [
   'http://localhost:1337',
   // 'https://signals.unassu.me',
 ]
+
+global.testHub = function (key) {
+  const hub = signalhub('test_' + key, hubs)
+  const swarm = webrtcSwarm(hub)
+  swarm.on('peer', function () {
+    console.log('peer', arguments)
+  })
+}
+
+// global.testFeed = () => {
+//   const leader = new Feed()
+//   leader.onReady(key => {
+//     const follower = new Feed(key)
+//     leader.onPeerConnect(console.log)
+//     follower.onPeerConnect(console.log)
+//   })
+// }
 
 export default class Feed {
   key: string
@@ -52,7 +69,7 @@ export default class Feed {
           })
         })
       })
-      
+
       this.events.emit('ready', this.key)
 
       if (feed.writable) {

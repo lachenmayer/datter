@@ -93,8 +93,8 @@ global.test = () => {
   })
 }
 
-export default () => <div>disabled</div>
-// export default connect(state => ({peers: state.peers}))(App)
+// export default () => <div>disabled</div>
+export default connect(state => ({peers: state.peers}))(App)
 
 function action (type, payload) {
   return {type, payload}
